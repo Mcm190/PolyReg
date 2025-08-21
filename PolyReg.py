@@ -183,6 +183,9 @@ class PolyRegApp(QMainWindow):
         self.x: Optional[np.ndarray] = None
         self.y: Optional[np.ndarray] = None
         self.best: Optional[Dict] = None
+        self.x_label: str = "X"
+        self.y_label: str = "Y"
+        self.forecast_plot_canvas = None  # For forecast plot
         self._build_ui()
 
     def _build_ui(self):
@@ -205,6 +208,7 @@ class PolyRegApp(QMainWindow):
         self._build_model_page()
         self._build_plots_page()
         self._build_forecast_page()
+        self._connect_axis_label_updates()
 
     # --- Data page ---
     def _build_data_page(self):
@@ -242,6 +246,20 @@ class PolyRegApp(QMainWindow):
         btn_load_csv.clicked.connect(self.load_csv_clicked)
         opts_layout.addWidget(btn_load_csv)
         layout.addWidget(opts_box)
+
+        # Axis label controls
+        axis_box = QWidget()
+        axis_layout = QHBoxLayout(axis_box)
+        axis_layout.setContentsMargins(0, 0, 0, 0)
+        axis_layout.addWidget(QLabel("X axis label:"))
+        self.x_label_edit = QLineEdit("X")
+        self.x_label_edit.setFixedWidth(120)
+        axis_layout.addWidget(self.x_label_edit)
+        axis_layout.addWidget(QLabel("Y axis label:"))
+        self.y_label_edit = QLineEdit("Y")
+        self.y_label_edit.setFixedWidth(120)
+        axis_layout.addWidget(self.y_label_edit)
+        layout.addWidget(axis_box)
 
         # Manual entry
         man_box = QGroupBox("Or paste values")
@@ -350,6 +368,8 @@ class PolyRegApp(QMainWindow):
         x, y, y_hat = self.x, self.y, self.best["y_hat"]
         order = np.argsort(x)
         xs, ys, yh = x[order], y[order], y_hat[order]
+        xlab = self.x_label_edit.text().strip() or "X"
+        ylab = self.y_label_edit.text().strip() or "Y"
         def put_plot(tab: QWidget, fig: plt.Figure):
             lyt = tab.layout()
             if lyt is None:
@@ -366,7 +386,10 @@ class PolyRegApp(QMainWindow):
         ax1 = f1.add_subplot(111)
         ax1.scatter(xs, ys, label="Data")
         ax1.plot(xs, yh, label="Fit")
-        ax1.set_xlabel("X"); ax1.set_ylabel("Y"); ax1.legend(); ax1.set_title("Polynomial Fit")
+        ax1.set_xlabel(xlab)
+        ax1.set_ylabel(ylab)
+        ax1.legend()
+        ax1.set_title("Polynomial Fit")
         put_plot(self.plot_frames["Fit"], f1)
         resid = y - y_hat
         # Residuals vs Fitted
@@ -374,19 +397,25 @@ class PolyRegApp(QMainWindow):
         ax2 = f2.add_subplot(111)
         ax2.scatter(y_hat, resid)
         ax2.axhline(0, linestyle='--')
-        ax2.set_xlabel("Fitted values"); ax2.set_ylabel("Residuals"); ax2.set_title("Residuals vs Fitted")
+        ax2.set_xlabel("Fitted values")
+        ax2.set_ylabel(f"Residual ({ylab})")
+        ax2.set_title("Residuals vs Fitted")
         put_plot(self.plot_frames["Residuals"], f2)
         # Histogram
         f3 = plt.Figure(figsize=(6,4))
         ax3 = f3.add_subplot(111)
         ax3.hist(resid, bins='auto')
-        ax3.set_xlabel("Residual"); ax3.set_ylabel("Count"); ax3.set_title("Residual Histogram")
+        ax3.set_xlabel(f"Residual ({ylab})")
+        ax3.set_ylabel("Count")
+        ax3.set_title("Residual Histogram")
         put_plot(self.plot_frames["Histogram"], f3)
         # QQ plot
         f4 = plt.Figure(figsize=(6,4))
         ax4 = f4.add_subplot(111)
         stats.probplot(resid, dist="norm", plot=ax4)
         ax4.set_title("Q–Q Plot of Residuals")
+        ax4.set_xlabel("Theoretical Quantiles")
+        ax4.set_ylabel("Ordered Residuals")
         put_plot(self.plot_frames["QQ Plot"], f4)
 
     # --- Forecast page ---
@@ -413,6 +442,11 @@ class PolyRegApp(QMainWindow):
         self.pred_table = QTableWidget(0, 2)
         self.pred_table.setHorizontalHeaderLabels(["X", "Predicted Y"])
         layout.addWidget(self.pred_table)
+        # Forecast plot area
+        self.forecast_plot_frame = QWidget()
+        self.forecast_plot_layout = QVBoxLayout(self.forecast_plot_frame)
+        self.forecast_plot_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.forecast_plot_frame)
 
     # --- Actions ---
     def browse_csv(self):
@@ -447,6 +481,10 @@ class PolyRegApp(QMainWindow):
             self.x, self.y = x[mask], y[mask]
             msg = f"Loaded {len(self.x)} rows" + (f" (dropped {dropped} bad rows)" if dropped else "")
             self.data_info_lbl.setText(msg)
+            # Save axis labels from user input
+            self.x_label = self.x_label_edit.text().strip() or "X"
+            self.y_label = self.y_label_edit.text().strip() or "Y"
+            self.draw_plots()
         except Exception as e:
             QMessageBox.critical(self, "CSV error", str(e))
 
@@ -460,8 +498,35 @@ class PolyRegApp(QMainWindow):
             self.x = np.array(xs, dtype=float)
             self.y = np.array(ys, dtype=float)
             self.data_info_lbl.setText(f"Using pasted data: {len(self.x)} rows")
+            # Save axis labels from user input
+            self.x_label = self.x_label_edit.text().strip() or "X"
+            self.y_label = self.y_label_edit.text().strip() or "Y"
+            self.draw_plots()
         except Exception as e:
             QMessageBox.critical(self, "Parse error", str(e))
+
+    def _connect_axis_label_updates(self):
+        # Update axis labels and redraw plots when changed
+        self.x_label_edit.textChanged.connect(self._axis_label_changed)
+        self.y_label_edit.textChanged.connect(self._axis_label_changed)
+
+    def _axis_label_changed(self):
+        self.x_label = self.x_label_edit.text().strip() or "X"
+        self.y_label = self.y_label_edit.text().strip() or "Y"
+        self.draw_plots()
+        # Also update forecast plot if visible
+        if self.best and self.pred_table.rowCount() > 0:
+            # Try to get current forecast points from table
+            xs = []
+            ys = []
+            for row in range(self.pred_table.rowCount()):
+                try:
+                    xs.append(float(self.pred_table.item(row, 0).text()))
+                    ys.append(float(self.pred_table.item(row, 1).text()))
+                except Exception:
+                    continue
+            if xs and ys:
+                self.draw_forecast_plot(np.array(xs), np.array(ys))
 
     def _ensure_data(self) -> bool:
         if self.x is None or self.y is None:
@@ -520,22 +585,44 @@ class PolyRegApp(QMainWindow):
                 self.pred_table.insertRow(row)
                 self.pred_table.setItem(row, 0, QTableWidgetItem(f"{xp:g}"))
                 self.pred_table.setItem(row, 1, QTableWidgetItem(f"{yp:g}"))
+            # Draw forecast plot
+            self.draw_forecast_plot(x_pred, y_pred)
         except Exception as e:
             QMessageBox.critical(self, "Predict error", str(e))
 
-    def do_solve(self):
-        if not self.best:
-            QMessageBox.warning(self, "Solve", "Fit a model first.")
+    def draw_forecast_plot(self, x_pred, y_pred):
+        # Remove previous plot if any
+        lyt = self.forecast_plot_layout
+        while lyt.count():
+            child = lyt.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        if self.x is None or self.y is None or not self.best:
             return
-        try:
-            y_target = float(self.solve_y_edit.text())
-            roots = solve_for_x_from_y(self.best["coefs"], y_target)
-            if roots:
-                QMessageBox.information(self, "Solutions", "\n".join(f"X = {r:g}" for r in roots))
-            else:
-                QMessageBox.information(self, "Solutions", "No real-valued solutions for the given Y.")
-        except Exception as e:
-            QMessageBox.critical(self, "Solve error", str(e))
+        # Prepare data for fit curve: extend to cover both data and prediction range
+        xlab = self.x_label_edit.text().strip() or "X"
+        ylab = self.y_label_edit.text().strip() or "Y"
+        x_min = min(np.min(self.x), np.min(x_pred))
+        x_max = max(np.max(self.x), np.max(x_pred))
+        x_fit = np.linspace(x_min, x_max, 400)
+        X_fit_poly, _ = build_design_matrix(x_fit, int(self.best["degree"]), include_bias=True)
+        y_fit = X_fit_poly @ self.best["coefs"]
+        fig = plt.Figure(figsize=(5,3.5))
+        ax = fig.add_subplot(111)
+        # Plot original data
+        ax.scatter(self.x, self.y, color="gray", alpha=0.5, label="Data")
+        # Plot fit curve (trendline) extended
+        ax.plot(x_fit, y_fit, color="blue", label="Fit")
+        # Plot forecasted points
+        ax.scatter(x_pred, y_pred, color="red", marker="o", s=60, label="Forecast")
+        for xp, yp in zip(x_pred, y_pred):
+            ax.annotate(f"({xp:g}, {yp:g})", (xp, yp), textcoords="offset points", xytext=(0,8), ha='center', fontsize=8)
+        ax.set_xlabel(xlab)
+        ax.set_ylabel(ylab)
+        ax.set_title("Forecasted Points on Fit")
+        ax.legend()
+        canvas = FigureCanvas(fig)
+        lyt.addWidget(canvas)
 
     def export_csv(self):
         if not self.best:
@@ -578,6 +665,19 @@ class PolyRegApp(QMainWindow):
         Path(path).write_text(json.dumps(data, indent=2))
         QMessageBox.information(self, "Export", f"Saved {path}")
 
+    def do_solve(self):
+        if not self.best:
+            QMessageBox.warning(self, "Solve", "Fit a model first.")
+            return
+        try:
+            y_target = float(self.solve_y_edit.text())
+            roots = solve_for_x_from_y(self.best["coefs"], y_target)
+            if roots:
+                QMessageBox.information(self, "Solutions", "\n".join(f"X = {r:g}" for r in roots))
+            else:
+                QMessageBox.information(self, "Solutions", "No real-valued solutions for the given Y.")
+        except Exception as e:
+            QMessageBox.critical(self, "Solve error", str(e))
 
 
 if __name__ == "__main__":
